@@ -1,1 +1,1 @@
-# MolecularGPT.github.io
+# MolecularGPT
