@@ -20,52 +20,47 @@
   }
   body.ready .fade-overlay{ opacity:0; }
 
-  .nodes-layer{
-    position:fixed; inset:0;
-    z-index:40;
-    pointer-events:none;
-  }
+  .nodes-layer{ position:fixed; inset:0; z-index:40; pointer-events:none; }
 
   .node-link{
-    position:absolute;
-    left:0; top:0;
+    position:absolute; left:0; top:0;
     transform: translate(-9999px,-9999px);
     pointer-events:auto;
 
-    display:flex;
-    align-items:center;
-    justify-content:center;
-
+    display:flex; align-items:center; justify-content:center;
     padding: 10px 14px;
     border-radius: 999px;
 
     font-family: monospace;
     font-weight: 900;
-    font-size: 2.2em;
+    font-size: 2.2;
     letter-spacing: 0.2px;
 
-    color: rgba(235,250,255,0.95);
+    color: rgba(10,18,28,0.88);
     text-decoration: none;
     white-space: nowrap;
 
-    background: linear-gradient(180deg, rgba(255,255,255,.10), rgba(255,255,255,.04));
-    border: 1px solid rgba(140,220,255,.22);
-    backdrop-filter: blur(14px) saturate(150%);
+    background: linear-gradient(180deg, rgba(255,255,255,.78), rgba(255,255,255,.40));
+    border: 1px solid rgba(20,80,110,.12);
+    backdrop-filter: blur(12px) saturate(165%);
 
     box-shadow:
-      0 0 24px rgba(80,190,255,.14),
-      inset 0 0 14px rgba(255,255,255,.06);
+      0 10px 30px rgba(0,40,60,.10),
+      0 0 40px rgba(0,210,255,.10),
+      0 0 44px rgba(255,110,200,.08),
+      inset 0 0 18px rgba(255,255,255,.55);
 
     transition: transform 120ms ease, border-color 160ms ease, box-shadow 160ms ease;
     will-change: transform;
   }
-
   .node-link:hover{
     transform: translate(-50%,-50%) scale(1.03);
-    border-color: rgba(180,245,255,.40);
+    border-color: rgba(0,120,160,.20);
     box-shadow:
-      0 0 34px rgba(80,190,255,.20),
-      inset 0 0 18px rgba(255,255,255,.08);
+      0 12px 36px rgba(0,40,60,.12),
+      0 0 54px rgba(0,210,255,.14),
+      0 0 60px rgba(255,110,200,.12),
+      inset 0 0 20px rgba(255,255,255,.60);
   }
 
   .noselect{ user-select:none; -webkit-user-select:none; }
@@ -76,7 +71,7 @@
 <canvas id="bg"></canvas>
 <div class="fade-overlay"></div>
 
-<div class="nodes-layer" id="nodesLayer">
+<div class="nodes-layer">
   <a class="node-link" id="lnk-mara"  href="https://nanome.ai/mara" target="_blank" rel="noreferrer">Nanome MARA</a>
   <a class="node-link" id="lnk-gem"   href="https://deepmind.google/technologies/gemini/" target="_blank" rel="noreferrer">Gemini AI</a>
   <a class="node-link" id="lnk-mega"  href="#" target="_blank" rel="noreferrer">MegaSyn</a>
@@ -86,83 +81,193 @@
 
 <script>
 /* =========================================================
-   MolecularGPT — Liquid Molecules Background
-   Fix: init order (no hero access before init)
+   MolecularGPT — Liquid morphing “amoeba bodies” under links
+   Request:
+   - under each link: white, dynamic, liquid morphing blobs (amoeba)
+   - background remains bright and colorful fog
+   Implementation:
+   - keep light mixing fog (soft pastel)
+   - add metaball-style field for each hero node -> white amoeba behind
+   - blur-like softness via multi-pass radial + screen/overlay
+   - keep constraints: hero nodes never overlap & never leave viewport
    ========================================================= */
 
 const canvas = document.getElementById("bg");
 const ctx = canvas.getContext("2d");
-
 addEventListener("load", () => requestAnimationFrame(() => document.body.classList.add("ready")));
 
-/* ===== utilities ===== */
+/* ===== utils ===== */
 const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
 const lerp=(a,b,t)=>a+(b-a)*t;
-function smoothstep(e0,e1,x){
-  x = clamp((x-e0)/(e1-e0),0,1);
-  return x*x*(3-2*x);
-}
+function smoothstep(e0,e1,x){ x=clamp((x-e0)/(e1-e0),0,1); return x*x*(3-2*x); }
+function hsl(h,s,l,a=1){ return `hsla(${h},${s}%,${l}%,${a})`; }
 
-/* ===== viewport/canvas ===== */
-let W=0,H=0,DPR=1;
-let initialized = false; // <— important
+/* ===== canvas size ===== */
+let DPR=1, W=0, H=0;
+let initialized=false;
 
 function resize(){
   DPR = Math.min(devicePixelRatio || 1, 2);
   W = canvas.width  = Math.floor(innerWidth * DPR);
   H = canvas.height = Math.floor(innerHeight * DPR);
-  canvas.style.width  = innerWidth + "px";
+  canvas.style.width = innerWidth + "px";
   canvas.style.height = innerHeight + "px";
   ctx.setTransform(DPR,0,0,DPR,0,0);
-
-  // only repack after init is complete
   if(initialized) packHeroNodes();
 }
 addEventListener("resize", resize);
 resize();
 
-/* ===== background particles ===== */
-const bokeh = Array.from({length: 64}, () => ({
-  x: Math.random()*innerWidth,
-  y: Math.random()*innerHeight,
-  r: lerp(10, 48, Math.random()),
-  a: lerp(0.05, 0.22, Math.random()),
-  vx: (Math.random()-0.5)*0.18,
-  vy: (Math.random()-0.5)*0.18,
-  warm: Math.random() < 0.34
-}));
-
-const sparks = Array.from({length: 180}, () => ({
-  x: Math.random()*innerWidth,
-  y: Math.random()*innerHeight,
-  v: lerp(0.25, 1.35, Math.random()),
-  s: lerp(0.7, 2.2, Math.random()),
-  p: Math.random()*Math.PI*2
-}));
-
-/* ===== hidden fields ===== */
-const fields = [
-  { p: 0.26, x:0, y:0 },
-  { p: 0.26, x:0, y:0 },
-  { p: 0.36, x:0, y:0 }
+/* ===== pastel molecular palette ===== */
+const PALETTE = [
+  { h: 190, s: 92, l: 62 }, // cyan
+  { h: 285, s: 90, l: 64 }, // violet
+  { h: 325, s: 92, l: 64 }, // magenta
+  { h: 215, s: 90, l: 64 }, // blue
+  { h: 140, s: 86, l: 58 }, // green
+  { h:  55, s: 92, l: 68 }, // yellow
+  { h:  25, s: 92, l: 66 }, // orange
+  { h:   5, s: 92, l: 64 }, // red
 ];
 
-function jitterFieldPositions(time){
-  const px1 = 0.44 + Math.cos(time*0.22)*0.13 + Math.cos(time*0.09)*0.05;
-  const py1 = 0.48 + Math.sin(time*0.18)*0.11 + Math.sin(time*0.06)*0.04;
+/* =========================================================
+   Mixing fog (low-res) -> upscale (soft blur)
+   ========================================================= */
+const fog = { scale: 2.35, resMax: 220, img:null, iw:0, ih:0, data:null };
 
-  const px2 = 0.56 + Math.cos(time*0.20 + 1.9)*0.13 + Math.cos(time*0.08 + 2.6)*0.05;
-  const py2 = 0.46 + Math.sin(time*0.17 + 2.2)*0.11 + Math.sin(time*0.06 + 1.4)*0.04;
+function initFogBuffer(){
+  const aspect = innerWidth / innerHeight;
+  let ih = Math.min(fog.resMax, 180);
+  let iw = Math.floor(ih * aspect);
+  if(iw < 150){ iw = 150; ih = Math.floor(iw / aspect); }
+  fog.iw = iw;
+  fog.ih = ih;
+  fog.img = ctx.createImageData(iw, ih);
+  fog.data = fog.img.data;
+}
+initFogBuffer();
 
-  const px3 = 0.50 + Math.cos(time*0.16 + 3.0)*0.10 + Math.cos(time*0.07 + 0.8)*0.04;
-  const py3 = 0.60 + Math.sin(time*0.15 + 3.4)*0.10 + Math.sin(time*0.06 + 2.1)*0.04;
+function hash2(ix, iy){
+  let h = ix * 374761393 + iy * 668265263;
+  h = (h ^ (h >> 13)) * 1274126177;
+  h = (h ^ (h >> 16)) >>> 0;
+  return h / 4294967295;
+}
+function vnoise(x, y){
+  const xi = Math.floor(x), yi = Math.floor(y);
+  const xf = x - xi,       yf = y - yi;
+  const u = xf*xf*(3-2*xf);
+  const v = yf*yf*(3-2*yf);
+  const a = hash2(xi,   yi);
+  const b = hash2(xi+1, yi);
+  const c = hash2(xi,   yi+1);
+  const d = hash2(xi+1, yi+1);
+  const ab = a + (b-a)*u;
+  const cd = c + (d-c)*u;
+  return ab + (cd-ab)*v;
+}
+function fbm(x,y){
+  let f=0, amp=0.58, freq=1.0;
+  for(let i=0;i<4;i++){
+    f += amp * vnoise(x*freq, y*freq);
+    freq *= 2.02;
+    amp *= 0.52;
+  }
+  return f;
+}
+function warp(x,y,t){
+  const w1 = fbm(x*0.75 + 0.7 + t*0.10, y*0.75 + 1.2 - t*0.08);
+  const w2 = fbm(x*0.75 - 1.1 - t*0.07, y*0.75 + 0.4 + t*0.11);
+  return { x: x + (w1-0.5)*0.88, y: y + (w2-0.5)*0.88 };
+}
+function hslToRgb(h, s, l){
+  let r,g,b;
+  if(s===0){ r=g=b=l; }
+  else{
+    const q = l < 0.5 ? l*(1+s) : l + s - l*s;
+    const p = 2*l - q;
+    r = hue2rgb(p,q,h+1/3);
+    g = hue2rgb(p,q,h);
+    b = hue2rgb(p,q,h-1/3);
+  }
+  return [Math.round(r*255), Math.round(g*255), Math.round(b*255)];
+}
+function hue2rgb(p,q,t){
+  if(t<0) t+=1;
+  if(t>1) t-=1;
+  if(t<1/6) return p+(q-p)*6*t;
+  if(t<1/2) return q;
+  if(t<2/3) return p+(q-p)*(2/3-t)*6;
+  return p;
+}
+function paletteMix(a,b,c){
+  const p1=PALETTE[0], p2=PALETTE[2], p3=PALETTE[4], p4=PALETTE[1];
+  let H = (p1.h*a + p2.h*b + p3.h*c) / (a+b+c+1e-6);
+  H = (H + (p4.h - H) * (0.18 + 0.38*(a*b))) % 360;
+  const S = 82 + 12*(b - 0.5);
+  const L = 56 + 26*(0.35*a + 0.35*b + 0.30*c);
+  return { h:H, s:clamp(S,70,96), l:clamp(L,52,86) };
+}
+function renderFog(t){
+  const aspect = innerWidth/innerHeight;
+  const curAspect = fog.iw / fog.ih;
+  if(Math.abs(curAspect - aspect) > 0.20) initFogBuffer();
 
-  fields[0].x = px1*innerWidth; fields[0].y = py1*innerHeight;
-  fields[1].x = px2*innerWidth; fields[1].y = py2*innerHeight;
-  fields[2].x = px3*innerWidth; fields[2].y = py3*innerHeight;
+  const iw=fog.iw, ih=fog.ih, data=fog.data;
+  const s = fog.scale;
+  const ox = t*0.08, oy = -t*0.06;
+
+  let p=0;
+  for(let y=0;y<ih;y++){
+    const ny = (y/ih - 0.5) * s;
+    for(let x=0;x<iw;x++){
+      const nx = (x/iw - 0.5) * s;
+
+      const wA = warp(nx + ox, ny + oy, t);
+      const wB = warp(nx - ox*0.7 + 1.7, ny + oy*0.9 - 0.6, t*1.05);
+      const wC = warp(nx + ox*0.9 - 1.2, ny - oy*0.8 + 1.1, t*0.95);
+
+      const a = fbm(wA.x*1.15, wA.y*1.15);
+      const b = fbm(wB.x*1.10, wB.y*1.10);
+      const c = fbm(wC.x*1.05, wC.y*1.05);
+
+      let d = (0.44*a + 0.34*b + 0.22*c);
+      d = smoothstep(0.08, 0.92, d);
+
+      const col = paletteMix(a,b,c);
+      const rgb = hslToRgb(col.h/360, col.s/100, col.l/100);
+
+      const vx=(x/iw - 0.5), vy=(y/ih - 0.5);
+      const vv=Math.sqrt(vx*vx + vy*vy);
+      const vig = 1 - smoothstep(0.55, 0.98, vv);
+
+      const glow = Math.pow(d, 1.45) * 1.05;
+      const base = (0.62 + 0.34*d) * (0.74 + 0.26*vig);
+
+      data[p++] = clamp(rgb[0] * (base + glow*0.28), 0, 255);
+      data[p++] = clamp(rgb[1] * (base + glow*0.28), 0, 255);
+      data[p++] = clamp(rgb[2] * (base + glow*0.28), 0, 255);
+      data[p++] = 255;
+    }
+  }
 }
 
-/* ===== DOM link map ===== */
+/* ===== bokeh overlay ===== */
+const bokeh = Array.from({length: 64}, () => {
+  const c = PALETTE[(Math.random()*PALETTE.length)|0];
+  return {
+    x: Math.random()*innerWidth,
+    y: Math.random()*innerHeight,
+    r: lerp(30, 120, Math.random()),
+    a: lerp(0.03, 0.12, Math.random()),
+    vx:(Math.random()-0.5)*0.16,
+    vy:(Math.random()-0.5)*0.16,
+    h:c.h, s:c.s, l:c.l,
+    wob: Math.random()*Math.PI*2
+  };
+});
+
+/* ===== link elements ===== */
 const linkEls = {
   "lnk-mara": document.getElementById("lnk-mara"),
   "lnk-gem":  document.getElementById("lnk-gem"),
@@ -171,212 +276,222 @@ const linkEls = {
   "lnk-mgpt": document.getElementById("lnk-mgpt"),
 };
 
-/* ===== hero nodes (created before packHeroNodes usage) ===== */
+/* ===== hero nodes ===== */
 const hero = [
-  { id:"lnk-mara",  r: 64 },
-  { id:"lnk-gem",   r: 58 },
-  { id:"lnk-mega",  r: 56 },
-  { id:"lnk-af3",   r: 62 },
-  { id:"lnk-mgpt",  r: 70 }
+  { id:"lnk-mara",  r: 64, col: PALETTE[0] },
+  { id:"lnk-gem",   r: 58, col: PALETTE[3] },
+  { id:"lnk-mega",  r: 56, col: PALETTE[2] },
+  { id:"lnk-af3",   r: 62, col: PALETTE[4] },
+  { id:"lnk-mgpt",  r: 70, col: PALETTE[1] }
 ].map(h=>({
   ...h,
-  x: innerWidth*0.5,
-  y: innerHeight*0.5,
-  vx:(Math.random()-0.5)*0.4,
-  vy:(Math.random()-0.5)*0.4,
-  phase: Math.random()*Math.PI*2,
-  w: lerp(0.7, 1.3, Math.random()),
-  safeX: 140,
-  safeY: 70
+  x: innerWidth*0.5, y: innerHeight*0.5,
+  vx:(Math.random()-0.5)*0.4, vy:(Math.random()-0.5)*0.4,
+  phase:Math.random()*Math.PI*2, w:lerp(0.7,1.3,Math.random()),
+  safeX: 140, safeY: 70
 }));
 
-const satellites = Array.from({length: 26}, ()=>({
-  x: innerWidth*(0.18 + Math.random()*0.64),
-  y: innerHeight*(0.18 + Math.random()*0.64),
-  vx:(Math.random()-0.5)*0.85,
-  vy:(Math.random()-0.5)*0.85,
-  r: lerp(4, 12, Math.random()),
-  phase: Math.random()*Math.PI*2,
-  w: lerp(0.8, 1.7, Math.random())
-}));
+const satellites = Array.from({length: 26}, ()=>{
+  const c = PALETTE[(Math.random()*PALETTE.length)|0];
+  return {
+    x: innerWidth*(0.18 + Math.random()*0.64),
+    y: innerHeight*(0.18 + Math.random()*0.64),
+    vx:(Math.random()-0.5)*0.85,
+    vy:(Math.random()-0.5)*0.85,
+    r: lerp(4, 11, Math.random()),
+    phase: Math.random()*Math.PI*2,
+    w: lerp(0.8, 1.7, Math.random()),
+    col: c
+  };
+});
 
-/* ===== DOM size -> safety margin ===== */
+/* ===== constraints ===== */
 function measureHeroSafety(){
   for(const h of hero){
     const el = linkEls[h.id];
     if(!el) continue;
     const rect = el.getBoundingClientRect();
-    const halfW = rect.width * 0.5;
-    const halfH = rect.height * 0.5;
     const pad = 12;
-    h.safeX = Math.max(h.r, halfW) + pad;
-    h.safeY = Math.max(h.r, halfH) + pad;
+    h.safeX = Math.max(h.r, rect.width*0.5) + pad;
+    h.safeY = Math.max(h.r, rect.height*0.5) + pad;
   }
 }
-
-/* ===== clamp within viewport ===== */
 function clampHeroToViewport(){
   for(const h of hero){
-    h.x = clamp(h.x, h.safeX, innerWidth  - h.safeX);
+    h.x = clamp(h.x, h.safeX, innerWidth - h.safeX);
     h.y = clamp(h.y, h.safeY, innerHeight - h.safeY);
   }
 }
-
-/* ===== non-overlap solver (hero only) ===== */
 function separateHeroNodes(iter=4){
-  const gap = 28; // guaranteed readable spacing
+  const gap = 34;
   for(let k=0;k<iter;k++){
     for(let i=0;i<hero.length;i++){
       for(let j=i+1;j<hero.length;j++){
-        const a = hero[i], b = hero[j];
-        const dx = b.x - a.x;
-        const dy = b.y - a.y;
-        const d = Math.sqrt(dx*dx + dy*dy) || 0.0001;
-
-        const ra = Math.max(a.safeX, a.safeY);
-        const rb = Math.max(b.safeX, b.safeY);
-        const minD = ra + rb + gap;
-
+        const a=hero[i], b=hero[j];
+        const dx=b.x-a.x, dy=b.y-a.y;
+        const d=Math.sqrt(dx*dx+dy*dy) || 0.0001;
+        const ra=Math.max(a.safeX,a.safeY);
+        const rb=Math.max(b.safeX,b.safeY);
+        const minD = ra+rb+gap;
         if(d < minD){
-          const push = (minD - d) * 0.5;
-          const nx = dx / d;
-          const ny = dy / d;
-
-          a.x -= nx * push; a.y -= ny * push;
-          b.x += nx * push; b.y += ny * push;
-
-          a.vx *= 0.92; a.vy *= 0.92;
-          b.vx *= 0.92; b.vy *= 0.92;
+          const push = (minD-d)*0.5;
+          const nx=dx/d, ny=dy/d;
+          a.x -= nx*push; a.y -= ny*push;
+          b.x += nx*push; b.y += ny*push;
+          a.vx*=0.92; a.vy*=0.92;
+          b.vx*=0.92; b.vy*=0.92;
         }
       }
     }
     clampHeroToViewport();
   }
 }
-
-/* ===== initial packing ===== */
 function packHeroNodes(){
-  const cx = innerWidth * 0.5;
-  const cy = innerHeight * 0.5;
-
-  // dynamic ring that still respects small mobile viewports
-  const ring = Math.min(innerWidth, innerHeight) * 0.22;
-
+  const cx=innerWidth*0.5, cy=innerHeight*0.5;
+  const ring=Math.min(innerWidth,innerHeight)*0.28;
   for(let i=0;i<hero.length;i++){
-    const ang = (Math.PI * 2 * i) / hero.length - Math.PI/2;
-    hero[i].x = cx + Math.cos(ang) * ring;
-    hero[i].y = cy + Math.sin(ang) * ring;
+    const ang=(Math.PI*2*i)/hero.length - Math.PI/2;
+    hero[i].x = cx + Math.cos(ang)*ring;
+    hero[i].y = cy + Math.sin(ang)*ring;
   }
-
-  // after layout is stable, measure + solve
-  requestAnimationFrame(() => {
+  requestAnimationFrame(()=>{
     measureHeroSafety();
     clampHeroToViewport();
-    separateHeroNodes(10);
+    separateHeroNodes(12);
   });
 }
 
-/* ===== physics ===== */
+/* ===== physics fields (for gentle drift) ===== */
+const fields = [
+  { p: 0.26, x:0, y:0 },
+  { p: 0.26, x:0, y:0 },
+  { p: 0.36, x:0, y:0 }
+];
+function jitterFieldPositions(time){
+  const px1=0.44 + Math.cos(time*0.22)*0.13 + Math.cos(time*0.09)*0.05;
+  const py1=0.48 + Math.sin(time*0.18)*0.11 + Math.sin(time*0.06)*0.04;
+  const px2=0.56 + Math.cos(time*0.20+1.9)*0.13 + Math.cos(time*0.08+2.6)*0.05;
+  const py2=0.46 + Math.sin(time*0.17+2.2)*0.11 + Math.sin(time*0.06+1.4)*0.04;
+  const px3=0.50 + Math.cos(time*0.16+3.0)*0.10 + Math.cos(time*0.07+0.8)*0.04;
+  const py3=0.60 + Math.sin(time*0.15+3.4)*0.10 + Math.sin(time*0.06+2.1)*0.04;
+  fields[0].x=px1*innerWidth; fields[0].y=py1*innerHeight;
+  fields[1].x=px2*innerWidth; fields[1].y=py2*innerHeight;
+  fields[2].x=px3*innerWidth; fields[2].y=py3*innerHeight;
+}
 function applyFieldForces(arr, time, intensity=1){
   for(const p of arr){
-    p.phase += 0.0065 * (p.w || 1);
-    p.vx += Math.cos(p.phase + time*0.85) * 0.006;
-    p.vy += Math.sin(p.phase*1.1 + time*0.72) * 0.006;
-
+    p.phase += 0.0065*(p.w||1);
+    p.vx += Math.cos(p.phase + time*0.85)*0.006;
+    p.vy += Math.sin(p.phase*1.1 + time*0.72)*0.006;
     for(const f of fields){
-      const dx = f.x - p.x;
-      const dy = f.y - p.y;
-      const d2 = dx*dx + dy*dy + 36;
-      const inv = 1 / Math.sqrt(d2);
-      const force = f.p * inv * intensity;
-      p.vx += dx * force * 0.00135;
-      p.vy += dy * force * 0.00135;
+      const dx=f.x-p.x, dy=f.y-p.y;
+      const d2=dx*dx+dy*dy+36;
+      const inv=1/Math.sqrt(d2);
+      const force=f.p*inv*intensity;
+      p.vx += dx*force*0.00135;
+      p.vy += dy*force*0.00135;
     }
-
-    p.vx *= 0.965;
-    p.vy *= 0.965;
-
-    p.x += p.vx;
-    p.y += p.vy;
+    p.vx*=0.965; p.vy*=0.965;
+    p.x += p.vx; p.y += p.vy;
   }
 }
 
-/* ===== render helpers ===== */
-function drawBackground(time){
-  const g = ctx.createRadialGradient(innerWidth*0.52, innerHeight*0.48, 0, innerWidth*0.52, innerHeight*0.48, Math.max(innerWidth,innerHeight)*0.95);
-  g.addColorStop(0, "rgba(18, 120, 155, 0.55)");
-  g.addColorStop(0.55, "rgba(7, 22, 35, 0.92)");
-  g.addColorStop(1, "rgba(2, 5, 10, 1.0)");
-  ctx.fillStyle = g;
-  ctx.fillRect(0,0,innerWidth,innerHeight);
+/* ===== liquid amoeba under each link (metaball-ish) =====
+   We draw a few orbiting “sub-blobs” around each hero node and blend
+   them using multiple radial gradients (cheap, looks like morphing body).
+*/
+function amoebaUnderNode(h, t){
+  const x=h.x, y=h.y;
+  const baseR = h.r * 1.55;
 
+  // internal wobble
+  const wob = 0.16 + 0.10*Math.sin(t*0.8 + h.phase);
+  const squash = 0.92 + 0.14*Math.sin(t*0.65 + h.phase*1.2);
+
+  // white body core
   ctx.save();
   ctx.globalCompositeOperation = "screen";
-  for(const b of bokeh){
-    b.x += b.vx; b.y += b.vy;
-    if(b.x<-90) b.x=innerWidth+90;
-    if(b.x>innerWidth+90) b.x=-90;
-    if(b.y<-90) b.y=innerHeight+90;
-    if(b.y>innerHeight+90) b.y=-90;
 
-    const rr = b.r*(0.88 + 0.22*Math.sin(time*0.7 + b.r));
-    const grad = ctx.createRadialGradient(b.x,b.y,0,b.x,b.y,rr);
-    const col = b.warm ? "255, 180, 90" : "120, 210, 255";
-    grad.addColorStop(0, `rgba(${col}, ${b.a})`);
-    grad.addColorStop(1, `rgba(${col}, 0)`);
-    ctx.fillStyle = grad;
-    ctx.beginPath();
-    ctx.arc(b.x,b.y,rr,0,Math.PI*2);
-    ctx.fill();
-  }
-  ctx.restore();
+  // big soft glow
+  const g0 = ctx.createRadialGradient(x,y,0,x,y,baseR*2.05);
+  g0.addColorStop(0, "rgba(255,255,255,0.22)");
+  g0.addColorStop(0.45,"rgba(255,255,255,0.12)");
+  g0.addColorStop(1, "rgba(255,255,255,0)");
+  ctx.fillStyle=g0;
+  ctx.beginPath(); ctx.arc(x,y,baseR*2.05,0,Math.PI*2); ctx.fill();
 
-  ctx.save();
-  ctx.globalCompositeOperation = "screen";
-  for(const s of sparks){
-    s.p += 0.0022*s.v;
-    const x = s.x + Math.cos(s.p)*18*s.v;
-    const y = s.y + Math.sin(s.p*1.1)*12*s.v;
-    const a = 0.05 + 0.10*(0.5+0.5*Math.sin(s.p*2.2));
-    ctx.fillStyle = `rgba(210,245,255,${a})`;
-    ctx.fillRect(x, y, s.s, s.s);
+  // main body (slightly “milky”)
+  const g1 = ctx.createRadialGradient(x - baseR*0.22, y - baseR*0.28, baseR*0.12, x,y,baseR*1.25);
+  g1.addColorStop(0, "rgba(255,255,255,0.92)");
+  g1.addColorStop(0.45,"rgba(255,255,255,0.40)");
+  g1.addColorStop(1, "rgba(255,255,255,0)");
+  ctx.fillStyle=g1;
+  ctx.beginPath(); ctx.arc(x,y,baseR*1.25,0,Math.PI*2); ctx.fill();
+
+  // orbiting sub-blobs (metaball feel)
+  const k = 5;
+  for(let i=0;i<k;i++){
+    const ang = t*0.55 + h.phase + (Math.PI*2*i)/k;
+    const rr = baseR*(0.46 + 0.10*Math.sin(t*0.9 + i*1.7));
+    const ox = Math.cos(ang) * baseR*(0.58 + wob) * squash;
+    const oy = Math.sin(ang*1.03) * baseR*(0.52 + wob) / squash;
+
+    const gx = x + ox;
+    const gy = y + oy;
+
+    const gi = ctx.createRadialGradient(gx - rr*0.25, gy - rr*0.28, rr*0.10, gx,gy,rr*1.25);
+    gi.addColorStop(0, "rgba(255,255,255,0.80)");
+    gi.addColorStop(0.55,"rgba(255,255,255,0.26)");
+    gi.addColorStop(1, "rgba(255,255,255,0)");
+    ctx.fillStyle=gi;
+    ctx.beginPath(); ctx.arc(gx,gy,rr*1.25,0,Math.PI*2); ctx.fill();
   }
+
+  // edge rim hint (very subtle)
+  ctx.globalCompositeOperation = "source-over";
+  ctx.strokeStyle = "rgba(255,255,255,0.14)";
+  ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.arc(x,y,baseR*1.05,0,Math.PI*2); ctx.stroke();
+
   ctx.restore();
 }
 
-function glossySphere(x,y,r,time){
+/* ===== molecule nodes (colored) ===== */
+function glossySphere(x,y,r,time,col){
+  const hue = col?.h ?? 190;
+
   ctx.save();
-  ctx.globalCompositeOperation = "screen";
-  const glow = ctx.createRadialGradient(x,y,0,x,y,r*2.9);
-  glow.addColorStop(0, "rgba(150,230,255,0.22)");
-  glow.addColorStop(0.35,"rgba(120,210,255,0.11)");
-  glow.addColorStop(1, "rgba(120,210,255,0)");
-  ctx.fillStyle = glow;
-  ctx.beginPath(); ctx.arc(x,y,r*2.9,0,Math.PI*2); ctx.fill();
+  ctx.globalCompositeOperation="screen";
+  const glow=ctx.createRadialGradient(x,y,0,x,y,r*3.0);
+  glow.addColorStop(0, hsl(hue, 90, 70, 0.16));
+  glow.addColorStop(0.35, hsl(hue, 90, 66, 0.08));
+  glow.addColorStop(1, hsl(hue, 90, 66, 0));
+  ctx.fillStyle=glow;
+  ctx.beginPath(); ctx.arc(x,y,r*3.0,0,Math.PI*2); ctx.fill();
   ctx.restore();
 
-  const body = ctx.createRadialGradient(x-r*0.36,y-r*0.48, r*0.22, x,y,r*1.25);
-  body.addColorStop(0, "rgba(245,253,255,0.94)");
-  body.addColorStop(0.18,"rgba(195,245,255,0.58)");
-  body.addColorStop(0.56,"rgba(95,195,235,0.18)");
-  body.addColorStop(1, "rgba(25,95,125,0.10)");
-  ctx.fillStyle = body;
+  const body=ctx.createRadialGradient(x-r*0.36,y-r*0.48, r*0.22, x,y,r*1.25);
+  body.addColorStop(0, "rgba(255,255,255,0.90)");
+  body.addColorStop(0.18, hsl(hue, 85, 78, 0.26));
+  body.addColorStop(0.56, hsl(hue, 80, 65, 0.10));
+  body.addColorStop(1, "rgba(255,255,255,0.03)");
+  ctx.fillStyle=body;
   ctx.beginPath(); ctx.arc(x,y,r,0,Math.PI*2); ctx.fill();
 
   ctx.save();
-  ctx.globalCompositeOperation = "screen";
-  const hx = x - r*0.30 + Math.cos(time*0.75 + x*0.002)*r*0.06;
-  const hy = y - r*0.34 + Math.sin(time*0.68 + y*0.002)*r*0.06;
-  const hi = ctx.createRadialGradient(hx,hy,0,hx,hy,r*0.72);
-  hi.addColorStop(0, "rgba(255,255,255,0.88)");
-  hi.addColorStop(0.35,"rgba(255,255,255,0.20)");
-  hi.addColorStop(1, "rgba(255,255,255,0)");
-  ctx.fillStyle = hi;
-  ctx.beginPath(); ctx.arc(hx,hy,r*0.72,0,Math.PI*2); ctx.fill();
+  ctx.globalCompositeOperation="screen";
+  const hx=x-r*0.30 + Math.cos(time*0.75 + x*0.002)*r*0.06;
+  const hy=y-r*0.34 + Math.sin(time*0.68 + y*0.002)*r*0.06;
+  const hi=ctx.createRadialGradient(hx,hy,0,hx,hy,r*0.76);
+  hi.addColorStop(0,"rgba(255,255,255,0.90)");
+  hi.addColorStop(0.35,"rgba(255,255,255,0.22)");
+  hi.addColorStop(1,"rgba(255,255,255,0)");
+  ctx.fillStyle=hi;
+  ctx.beginPath(); ctx.arc(hx,hy,r*0.76,0,Math.PI*2); ctx.fill();
   ctx.restore();
 
-  ctx.strokeStyle = "rgba(200,245,255,0.18)";
-  ctx.lineWidth = 1;
+  ctx.strokeStyle="rgba(40,120,150,0.10)";
+  ctx.lineWidth=1;
   ctx.beginPath(); ctx.arc(x,y,r-0.7,0,Math.PI*2); ctx.stroke();
 }
 
@@ -387,7 +502,7 @@ function liquidBridge(a,b,strength){
   if(d>maxD) return;
 
   const t=1-(d/maxD);
-  const w=lerp(2.2, 13.0, smoothstep(0,1,t))*strength;
+  const w=lerp(2.4, 13.2, smoothstep(0,1,t))*strength;
 
   const nx=-dy/d, ny=dx/d;
   const neck=lerp(0.16, 0.60, t);
@@ -401,18 +516,25 @@ function liquidBridge(a,b,strength){
   const mx=(a.x+b.x)*0.5 + nx*(10*(0.5-t));
   const my=(a.y+b.y)*0.5 + ny*(10*(0.5-t));
 
+  const ha=a.col?.h ?? 190;
+  const hb=b.col?.h ?? 285;
+  let dh=hb-ha;
+  if(dh>180) dh-=360;
+  if(dh<-180) dh+=360;
+  const hm=(ha + dh*0.5 + 360) % 360;
+
   ctx.save();
   ctx.globalCompositeOperation="screen";
   ctx.lineCap="round"; ctx.lineJoin="round";
 
-  ctx.strokeStyle=`rgba(120,220,255,${0.06+0.16*t})`;
+  ctx.strokeStyle=hsl(hm, 90, 70, 0.07 + 0.14*t);
   ctx.lineWidth=w*3.0;
   ctx.beginPath();
   ctx.moveTo(ax1,ay1); ctx.quadraticCurveTo(mx,my,bx1,by1);
   ctx.moveTo(ax2,ay2); ctx.quadraticCurveTo(mx,my,bx2,by2);
   ctx.stroke();
 
-  ctx.strokeStyle=`rgba(235,252,255,${0.06+0.20*t})`;
+  ctx.strokeStyle="rgba(255,255,255," + (0.05 + 0.12*t) + ")";
   ctx.lineWidth=w*1.45;
   ctx.beginPath();
   ctx.moveTo(ax1,ay1); ctx.quadraticCurveTo(mx,my,bx1,by1);
@@ -426,48 +548,84 @@ function liquidBridge(a,b,strength){
 function placeLink(node){
   const el = linkEls[node.id];
   if(!el) return;
-  const scale = clamp(node.r / 70, 0.86, 1.08);
+  const scale = clamp(node.r/70, 0.86, 1.10);
   el.style.transform = `translate(${node.x}px, ${node.y}px) translate(-50%,-50%) scale(${scale})`;
 }
 
-/* ===== init packing AFTER hero exists ===== */
+/* ===== init ===== */
 packHeroNodes();
 initialized = true;
 
-/* ===== animation loop ===== */
-let measuredOnce = false;
+let measuredOnce=false;
 
+/* ===== main loop ===== */
 function frame(ms){
-  const time = ms*0.001;
+  const t = ms*0.001;
 
-  drawBackground(time);
-  jitterFieldPositions(time);
+  // 1) bright mixing fog
+  renderFog(t);
 
-  applyFieldForces(hero, time, 0.45);
-  applyFieldForces(satellites, time, 0.72);
+  // upscale fog via offscreen
+  if(!frame.off){
+    frame.off = document.createElement("canvas");
+    frame.offCtx = frame.off.getContext("2d", { willReadFrequently: true });
+  }
+  const off = frame.off;
+  off.width = fog.iw;
+  off.height = fog.ih;
+  frame.offCtx.putImageData(fog.img, 0, 0);
 
-  // first placement pass
+  ctx.clearRect(0,0,innerWidth,innerHeight);
+  ctx.imageSmoothingEnabled = true;
+  ctx.drawImage(off, 0, 0, fog.iw, fog.ih, 0, 0, innerWidth, innerHeight);
+
+  // 2) soft bokeh layer
+  ctx.save();
+  ctx.globalCompositeOperation="screen";
+  for(const b of bokeh){
+    b.x += b.vx; b.y += b.vy; b.wob += 0.010;
+    if(b.x<-180) b.x=innerWidth+180;
+    if(b.x>innerWidth+180) b.x=-180;
+    if(b.y<-180) b.y=innerHeight+180;
+    if(b.y>innerHeight+180) b.y=-180;
+
+    const rr = b.r*(0.86 + 0.24*Math.sin(t*0.85 + b.wob));
+    const grad = ctx.createRadialGradient(b.x,b.y,0,b.x,b.y,rr);
+    grad.addColorStop(0, hsl(b.h, b.s, Math.min(90, b.l+22), b.a));
+    grad.addColorStop(0.45, hsl(b.h, b.s, Math.min(88, b.l+14), b.a*0.34));
+    grad.addColorStop(1, hsl(b.h, b.s, b.l, 0));
+    ctx.fillStyle=grad;
+    ctx.beginPath(); ctx.arc(b.x,b.y,rr,0,Math.PI*2); ctx.fill();
+  }
+  ctx.restore();
+
+  // 3) node dynamics
+  jitterFieldPositions(t);
+  applyFieldForces(hero, t, 0.45);
+  applyFieldForces(satellites, t, 0.72);
+
   for(const h of hero) placeLink(h);
 
-  // ensure measurements + constraints are valid
   if(!measuredOnce){
     measureHeroSafety();
     clampHeroToViewport();
-    separateHeroNodes(12);
-    measuredOnce = true;
+    separateHeroNodes(14);
+    measuredOnce=true;
   }
-
-  // enforce every frame: never overlap + never out of bounds
   clampHeroToViewport();
   separateHeroNodes(3);
 
-  // bridges
-  for(let i=0;i<hero.length;i++){
-    for(let j=i+1;j<hero.length;j++){
-      liquidBridge(hero[i], hero[j], 1.10);
-    }
+  // 4) draw white amoebas UNDER links (behind nodes)
+  for(const h of hero){
+    amoebaUnderNode(h, t);
   }
 
+  // 5) bridges + colored particles on top
+  for(let i=0;i<hero.length;i++){
+    for(let j=i+1;j<hero.length;j++){
+      liquidBridge(hero[i], hero[j], 1.06);
+    }
+  }
   for(const s of satellites){
     let best=null, bestD=Infinity;
     for(const h of hero){
@@ -475,24 +633,22 @@ function frame(ms){
       const d=dx*dx+dy*dy;
       if(d<bestD){bestD=d; best=h;}
     }
-    if(best) liquidBridge({x:s.x,y:s.y,r:s.r*0.95}, best, 0.55);
+    if(best) liquidBridge({x:s.x,y:s.y,r:s.r*0.95,col:s.col}, best, 0.52);
   }
 
-  // draw
-  for(const s of satellites) glossySphere(s.x,s.y,s.r,time);
-  for(const h of hero) glossySphere(h.x,h.y,h.r,time);
+  for(const s of satellites) glossySphere(s.x,s.y,s.r,t,s.col);
+  for(const h of hero) glossySphere(h.x,h.y,h.r,t,h.col);
 
-  // bloom wash
+  // subtle white veil for “milky” look
   ctx.save();
   ctx.globalCompositeOperation="screen";
-  const wash=ctx.createRadialGradient(innerWidth*0.5, innerHeight*0.5, 0, innerWidth*0.5, innerHeight*0.5, Math.max(innerWidth,innerHeight)*0.8);
-  wash.addColorStop(0,"rgba(120,220,255,0.06)");
-  wash.addColorStop(1,"rgba(120,220,255,0)");
-  ctx.fillStyle=wash;
+  const veil=ctx.createRadialGradient(innerWidth*0.5, innerHeight*0.45, 0, innerWidth*0.5, innerHeight*0.45, Math.max(innerWidth,innerHeight)*0.95);
+  veil.addColorStop(0,"rgba(255,255,255,0.10)");
+  veil.addColorStop(1,"rgba(255,255,255,0)");
+  ctx.fillStyle=veil;
   ctx.fillRect(0,0,innerWidth,innerHeight);
   ctx.restore();
 
-  // final placement pass after constraints
   for(const h of hero) placeLink(h);
 
   requestAnimationFrame(frame);
