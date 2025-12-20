@@ -1,0 +1,503 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>MolecularGPT</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+
+<style>
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{width:100%;height:100%;overflow:hidden;background:#ffffff}
+  canvas{position:fixed;inset:0;width:100%;height:100%}
+
+  .fade-overlay{
+    position:fixed; inset:0;
+    background:#fff;
+    opacity:1;
+    transition: opacity 1200ms cubic-bezier(.2,.9,.2,1);
+    pointer-events:none;
+    z-index:50;
+  }
+  body.ready .fade-overlay{ opacity:0; }
+
+  .nodes-layer{
+    position:fixed; inset:0;
+    z-index:40;
+    pointer-events:none;
+  }
+
+  .node-link{
+    position:absolute;
+    left:0; top:0;
+    transform: translate(-9999px,-9999px);
+    pointer-events:auto;
+
+    display:flex;
+    align-items:center;
+    justify-content:center;
+
+    padding: 10px 14px;
+    border-radius: 999px;
+
+    font-family: monospace;
+    font-weight: 900;
+    font-size: 33px;
+    letter-spacing: 0.2px;
+
+    color: rgba(235,250,255,0.95);
+    text-decoration: none;
+    white-space: nowrap;
+
+    background: linear-gradient(180deg, rgba(255,255,255,.10), rgba(255,255,255,.04));
+    border: 1px solid rgba(140,220,255,.22);
+    backdrop-filter: blur(14px) saturate(150%);
+
+    box-shadow:
+      0 0 24px rgba(80,190,255,.14),
+      inset 0 0 14px rgba(255,255,255,.06);
+
+    transition: transform 120ms ease, border-color 160ms ease, box-shadow 160ms ease;
+    will-change: transform;
+  }
+
+  .node-link:hover{
+    transform: translate(-50%,-50%) scale(1.03);
+    border-color: rgba(180,245,255,.40);
+    box-shadow:
+      0 0 34px rgba(80,190,255,.20),
+      inset 0 0 18px rgba(255,255,255,.08);
+  }
+
+  .noselect{ user-select:none; -webkit-user-select:none; }
+</style>
+</head>
+
+<body class="noselect">
+<canvas id="bg"></canvas>
+<div class="fade-overlay"></div>
+
+<div class="nodes-layer" id="nodesLayer">
+  <a class="node-link" id="lnk-mara"  href="https://nanome.ai/mara" target="_blank" rel="noreferrer">Nanome MARA</a>
+  <a class="node-link" id="lnk-gem"   href="https://deepmind.google/technologies/gemini/" target="_blank" rel="noreferrer">Gemini AI</a>
+  <a class="node-link" id="lnk-mega"  href="#" target="_blank" rel="noreferrer">MegaSyn</a>
+  <a class="node-link" id="lnk-af3"   href="https://deepmind.google/technologies/alphafold/" target="_blank" rel="noreferrer">AlphaFold 3</a>
+  <a class="node-link" id="lnk-mgpt"  href="https://github.com/MolecularGPT" target="_blank" rel="noreferrer">MolecularGPT</a>
+</div>
+
+<script>
+/* =========================================================
+   MolecularGPT — Liquid Molecules Background
+   Fix: init order (no hero access before init)
+   ========================================================= */
+
+const canvas = document.getElementById("bg");
+const ctx = canvas.getContext("2d");
+
+addEventListener("load", () => requestAnimationFrame(() => document.body.classList.add("ready")));
+
+/* ===== utilities ===== */
+const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
+const lerp=(a,b,t)=>a+(b-a)*t;
+function smoothstep(e0,e1,x){
+  x = clamp((x-e0)/(e1-e0),0,1);
+  return x*x*(3-2*x);
+}
+
+/* ===== viewport/canvas ===== */
+let W=0,H=0,DPR=1;
+let initialized = false; // <— important
+
+function resize(){
+  DPR = Math.min(devicePixelRatio || 1, 2);
+  W = canvas.width  = Math.floor(innerWidth * DPR);
+  H = canvas.height = Math.floor(innerHeight * DPR);
+  canvas.style.width  = innerWidth + "px";
+  canvas.style.height = innerHeight + "px";
+  ctx.setTransform(DPR,0,0,DPR,0,0);
+
+  // only repack after init is complete
+  if(initialized) packHeroNodes();
+}
+addEventListener("resize", resize);
+resize();
+
+/* ===== background particles ===== */
+const bokeh = Array.from({length: 64}, () => ({
+  x: Math.random()*innerWidth,
+  y: Math.random()*innerHeight,
+  r: lerp(10, 48, Math.random()),
+  a: lerp(0.05, 0.22, Math.random()),
+  vx: (Math.random()-0.5)*0.18,
+  vy: (Math.random()-0.5)*0.18,
+  warm: Math.random() < 0.34
+}));
+
+const sparks = Array.from({length: 180}, () => ({
+  x: Math.random()*innerWidth,
+  y: Math.random()*innerHeight,
+  v: lerp(0.25, 1.35, Math.random()),
+  s: lerp(0.7, 2.2, Math.random()),
+  p: Math.random()*Math.PI*2
+}));
+
+/* ===== hidden fields ===== */
+const fields = [
+  { p: 0.26, x:0, y:0 },
+  { p: 0.26, x:0, y:0 },
+  { p: 0.36, x:0, y:0 }
+];
+
+function jitterFieldPositions(time){
+  const px1 = 0.44 + Math.cos(time*0.22)*0.13 + Math.cos(time*0.09)*0.05;
+  const py1 = 0.48 + Math.sin(time*0.18)*0.11 + Math.sin(time*0.06)*0.04;
+
+  const px2 = 0.56 + Math.cos(time*0.20 + 1.9)*0.13 + Math.cos(time*0.08 + 2.6)*0.05;
+  const py2 = 0.46 + Math.sin(time*0.17 + 2.2)*0.11 + Math.sin(time*0.06 + 1.4)*0.04;
+
+  const px3 = 0.50 + Math.cos(time*0.16 + 3.0)*0.10 + Math.cos(time*0.07 + 0.8)*0.04;
+  const py3 = 0.60 + Math.sin(time*0.15 + 3.4)*0.10 + Math.sin(time*0.06 + 2.1)*0.04;
+
+  fields[0].x = px1*innerWidth; fields[0].y = py1*innerHeight;
+  fields[1].x = px2*innerWidth; fields[1].y = py2*innerHeight;
+  fields[2].x = px3*innerWidth; fields[2].y = py3*innerHeight;
+}
+
+/* ===== DOM link map ===== */
+const linkEls = {
+  "lnk-mara": document.getElementById("lnk-mara"),
+  "lnk-gem":  document.getElementById("lnk-gem"),
+  "lnk-mega": document.getElementById("lnk-mega"),
+  "lnk-af3":  document.getElementById("lnk-af3"),
+  "lnk-mgpt": document.getElementById("lnk-mgpt"),
+};
+
+/* ===== hero nodes (created before packHeroNodes usage) ===== */
+const hero = [
+  { id:"lnk-mara",  r: 64 },
+  { id:"lnk-gem",   r: 58 },
+  { id:"lnk-mega",  r: 56 },
+  { id:"lnk-af3",   r: 62 },
+  { id:"lnk-mgpt",  r: 70 }
+].map(h=>({
+  ...h,
+  x: innerWidth*0.5,
+  y: innerHeight*0.5,
+  vx:(Math.random()-0.5)*0.4,
+  vy:(Math.random()-0.5)*0.4,
+  phase: Math.random()*Math.PI*2,
+  w: lerp(0.7, 1.3, Math.random()),
+  safeX: 140,
+  safeY: 70
+}));
+
+const satellites = Array.from({length: 26}, ()=>({
+  x: innerWidth*(0.18 + Math.random()*0.64),
+  y: innerHeight*(0.18 + Math.random()*0.64),
+  vx:(Math.random()-0.5)*0.85,
+  vy:(Math.random()-0.5)*0.85,
+  r: lerp(4, 12, Math.random()),
+  phase: Math.random()*Math.PI*2,
+  w: lerp(0.8, 1.7, Math.random())
+}));
+
+/* ===== DOM size -> safety margin ===== */
+function measureHeroSafety(){
+  for(const h of hero){
+    const el = linkEls[h.id];
+    if(!el) continue;
+    const rect = el.getBoundingClientRect();
+    const halfW = rect.width * 0.5;
+    const halfH = rect.height * 0.5;
+    const pad = 12;
+    h.safeX = Math.max(h.r, halfW) + pad;
+    h.safeY = Math.max(h.r, halfH) + pad;
+  }
+}
+
+/* ===== clamp within viewport ===== */
+function clampHeroToViewport(){
+  for(const h of hero){
+    h.x = clamp(h.x, h.safeX, innerWidth  - h.safeX);
+    h.y = clamp(h.y, h.safeY, innerHeight - h.safeY);
+  }
+}
+
+/* ===== non-overlap solver (hero only) ===== */
+function separateHeroNodes(iter=4){
+  const gap = 28; // guaranteed readable spacing
+  for(let k=0;k<iter;k++){
+    for(let i=0;i<hero.length;i++){
+      for(let j=i+1;j<hero.length;j++){
+        const a = hero[i], b = hero[j];
+        const dx = b.x - a.x;
+        const dy = b.y - a.y;
+        const d = Math.sqrt(dx*dx + dy*dy) || 0.0001;
+
+        const ra = Math.max(a.safeX, a.safeY);
+        const rb = Math.max(b.safeX, b.safeY);
+        const minD = ra + rb + gap;
+
+        if(d < minD){
+          const push = (minD - d) * 0.5;
+          const nx = dx / d;
+          const ny = dy / d;
+
+          a.x -= nx * push; a.y -= ny * push;
+          b.x += nx * push; b.y += ny * push;
+
+          a.vx *= 0.92; a.vy *= 0.92;
+          b.vx *= 0.92; b.vy *= 0.92;
+        }
+      }
+    }
+    clampHeroToViewport();
+  }
+}
+
+/* ===== initial packing ===== */
+function packHeroNodes(){
+  const cx = innerWidth * 0.5;
+  const cy = innerHeight * 0.5;
+
+  // dynamic ring that still respects small mobile viewports
+  const ring = Math.min(innerWidth, innerHeight) * 0.22;
+
+  for(let i=0;i<hero.length;i++){
+    const ang = (Math.PI * 2 * i) / hero.length - Math.PI/2;
+    hero[i].x = cx + Math.cos(ang) * ring;
+    hero[i].y = cy + Math.sin(ang) * ring;
+  }
+
+  // after layout is stable, measure + solve
+  requestAnimationFrame(() => {
+    measureHeroSafety();
+    clampHeroToViewport();
+    separateHeroNodes(10);
+  });
+}
+
+/* ===== physics ===== */
+function applyFieldForces(arr, time, intensity=1){
+  for(const p of arr){
+    p.phase += 0.0065 * (p.w || 1);
+    p.vx += Math.cos(p.phase + time*0.85) * 0.006;
+    p.vy += Math.sin(p.phase*1.1 + time*0.72) * 0.006;
+
+    for(const f of fields){
+      const dx = f.x - p.x;
+      const dy = f.y - p.y;
+      const d2 = dx*dx + dy*dy + 36;
+      const inv = 1 / Math.sqrt(d2);
+      const force = f.p * inv * intensity;
+      p.vx += dx * force * 0.00135;
+      p.vy += dy * force * 0.00135;
+    }
+
+    p.vx *= 0.965;
+    p.vy *= 0.965;
+
+    p.x += p.vx;
+    p.y += p.vy;
+  }
+}
+
+/* ===== render helpers ===== */
+function drawBackground(time){
+  const g = ctx.createRadialGradient(innerWidth*0.52, innerHeight*0.48, 0, innerWidth*0.52, innerHeight*0.48, Math.max(innerWidth,innerHeight)*0.95);
+  g.addColorStop(0, "rgba(18, 120, 155, 0.55)");
+  g.addColorStop(0.55, "rgba(7, 22, 35, 0.92)");
+  g.addColorStop(1, "rgba(2, 5, 10, 1.0)");
+  ctx.fillStyle = g;
+  ctx.fillRect(0,0,innerWidth,innerHeight);
+
+  ctx.save();
+  ctx.globalCompositeOperation = "screen";
+  for(const b of bokeh){
+    b.x += b.vx; b.y += b.vy;
+    if(b.x<-90) b.x=innerWidth+90;
+    if(b.x>innerWidth+90) b.x=-90;
+    if(b.y<-90) b.y=innerHeight+90;
+    if(b.y>innerHeight+90) b.y=-90;
+
+    const rr = b.r*(0.88 + 0.22*Math.sin(time*0.7 + b.r));
+    const grad = ctx.createRadialGradient(b.x,b.y,0,b.x,b.y,rr);
+    const col = b.warm ? "255, 180, 90" : "120, 210, 255";
+    grad.addColorStop(0, `rgba(${col}, ${b.a})`);
+    grad.addColorStop(1, `rgba(${col}, 0)`);
+    ctx.fillStyle = grad;
+    ctx.beginPath();
+    ctx.arc(b.x,b.y,rr,0,Math.PI*2);
+    ctx.fill();
+  }
+  ctx.restore();
+
+  ctx.save();
+  ctx.globalCompositeOperation = "screen";
+  for(const s of sparks){
+    s.p += 0.0022*s.v;
+    const x = s.x + Math.cos(s.p)*18*s.v;
+    const y = s.y + Math.sin(s.p*1.1)*12*s.v;
+    const a = 0.05 + 0.10*(0.5+0.5*Math.sin(s.p*2.2));
+    ctx.fillStyle = `rgba(210,245,255,${a})`;
+    ctx.fillRect(x, y, s.s, s.s);
+  }
+  ctx.restore();
+}
+
+function glossySphere(x,y,r,time){
+  ctx.save();
+  ctx.globalCompositeOperation = "screen";
+  const glow = ctx.createRadialGradient(x,y,0,x,y,r*2.9);
+  glow.addColorStop(0, "rgba(150,230,255,0.22)");
+  glow.addColorStop(0.35,"rgba(120,210,255,0.11)");
+  glow.addColorStop(1, "rgba(120,210,255,0)");
+  ctx.fillStyle = glow;
+  ctx.beginPath(); ctx.arc(x,y,r*2.9,0,Math.PI*2); ctx.fill();
+  ctx.restore();
+
+  const body = ctx.createRadialGradient(x-r*0.36,y-r*0.48, r*0.22, x,y,r*1.25);
+  body.addColorStop(0, "rgba(245,253,255,0.94)");
+  body.addColorStop(0.18,"rgba(195,245,255,0.58)");
+  body.addColorStop(0.56,"rgba(95,195,235,0.18)");
+  body.addColorStop(1, "rgba(25,95,125,0.10)");
+  ctx.fillStyle = body;
+  ctx.beginPath(); ctx.arc(x,y,r,0,Math.PI*2); ctx.fill();
+
+  ctx.save();
+  ctx.globalCompositeOperation = "screen";
+  const hx = x - r*0.30 + Math.cos(time*0.75 + x*0.002)*r*0.06;
+  const hy = y - r*0.34 + Math.sin(time*0.68 + y*0.002)*r*0.06;
+  const hi = ctx.createRadialGradient(hx,hy,0,hx,hy,r*0.72);
+  hi.addColorStop(0, "rgba(255,255,255,0.88)");
+  hi.addColorStop(0.35,"rgba(255,255,255,0.20)");
+  hi.addColorStop(1, "rgba(255,255,255,0)");
+  ctx.fillStyle = hi;
+  ctx.beginPath(); ctx.arc(hx,hy,r*0.72,0,Math.PI*2); ctx.fill();
+  ctx.restore();
+
+  ctx.strokeStyle = "rgba(200,245,255,0.18)";
+  ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.arc(x,y,r-0.7,0,Math.PI*2); ctx.stroke();
+}
+
+function liquidBridge(a,b,strength){
+  const dx=b.x-a.x, dy=b.y-a.y;
+  const d=Math.sqrt(dx*dx+dy*dy)+1e-6;
+  const maxD=(a.r+b.r)*3.95;
+  if(d>maxD) return;
+
+  const t=1-(d/maxD);
+  const w=lerp(2.2, 13.0, smoothstep(0,1,t))*strength;
+
+  const nx=-dy/d, ny=dx/d;
+  const neck=lerp(0.16, 0.60, t);
+
+  const ax1=a.x + nx*a.r*neck, ay1=a.y + ny*a.r*neck;
+  const ax2=a.x - nx*a.r*neck, ay2=a.y - ny*a.r*neck;
+
+  const bx1=b.x + nx*b.r*neck, by1=b.y + ny*b.r*neck;
+  const bx2=b.x - nx*b.r*neck, by2=b.y - ny*b.r*neck;
+
+  const mx=(a.x+b.x)*0.5 + nx*(10*(0.5-t));
+  const my=(a.y+b.y)*0.5 + ny*(10*(0.5-t));
+
+  ctx.save();
+  ctx.globalCompositeOperation="screen";
+  ctx.lineCap="round"; ctx.lineJoin="round";
+
+  ctx.strokeStyle=`rgba(120,220,255,${0.06+0.16*t})`;
+  ctx.lineWidth=w*3.0;
+  ctx.beginPath();
+  ctx.moveTo(ax1,ay1); ctx.quadraticCurveTo(mx,my,bx1,by1);
+  ctx.moveTo(ax2,ay2); ctx.quadraticCurveTo(mx,my,bx2,by2);
+  ctx.stroke();
+
+  ctx.strokeStyle=`rgba(235,252,255,${0.06+0.20*t})`;
+  ctx.lineWidth=w*1.45;
+  ctx.beginPath();
+  ctx.moveTo(ax1,ay1); ctx.quadraticCurveTo(mx,my,bx1,by1);
+  ctx.moveTo(ax2,ay2); ctx.quadraticCurveTo(mx,my,bx2,by2);
+  ctx.stroke();
+
+  ctx.restore();
+}
+
+/* ===== DOM placement ===== */
+function placeLink(node){
+  const el = linkEls[node.id];
+  if(!el) return;
+  const scale = clamp(node.r / 70, 0.86, 1.08);
+  el.style.transform = `translate(${node.x}px, ${node.y}px) translate(-50%,-50%) scale(${scale})`;
+}
+
+/* ===== init packing AFTER hero exists ===== */
+packHeroNodes();
+initialized = true;
+
+/* ===== animation loop ===== */
+let measuredOnce = false;
+
+function frame(ms){
+  const time = ms*0.001;
+
+  drawBackground(time);
+  jitterFieldPositions(time);
+
+  applyFieldForces(hero, time, 0.45);
+  applyFieldForces(satellites, time, 0.72);
+
+  // first placement pass
+  for(const h of hero) placeLink(h);
+
+  // ensure measurements + constraints are valid
+  if(!measuredOnce){
+    measureHeroSafety();
+    clampHeroToViewport();
+    separateHeroNodes(12);
+    measuredOnce = true;
+  }
+
+  // enforce every frame: never overlap + never out of bounds
+  clampHeroToViewport();
+  separateHeroNodes(3);
+
+  // bridges
+  for(let i=0;i<hero.length;i++){
+    for(let j=i+1;j<hero.length;j++){
+      liquidBridge(hero[i], hero[j], 1.10);
+    }
+  }
+
+  for(const s of satellites){
+    let best=null, bestD=Infinity;
+    for(const h of hero){
+      const dx=h.x-s.x, dy=h.y-s.y;
+      const d=dx*dx+dy*dy;
+      if(d<bestD){bestD=d; best=h;}
+    }
+    if(best) liquidBridge({x:s.x,y:s.y,r:s.r*0.95}, best, 0.55);
+  }
+
+  // draw
+  for(const s of satellites) glossySphere(s.x,s.y,s.r,time);
+  for(const h of hero) glossySphere(h.x,h.y,h.r,time);
+
+  // bloom wash
+  ctx.save();
+  ctx.globalCompositeOperation="screen";
+  const wash=ctx.createRadialGradient(innerWidth*0.5, innerHeight*0.5, 0, innerWidth*0.5, innerHeight*0.5, Math.max(innerWidth,innerHeight)*0.8);
+  wash.addColorStop(0,"rgba(120,220,255,0.06)");
+  wash.addColorStop(1,"rgba(120,220,255,0)");
+  ctx.fillStyle=wash;
+  ctx.fillRect(0,0,innerWidth,innerHeight);
+  ctx.restore();
+
+  // final placement pass after constraints
+  for(const h of hero) placeLink(h);
+
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>
