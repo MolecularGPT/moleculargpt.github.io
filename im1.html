@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>BIOLOCK: Оптимизация Иматиниба</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Используем стабильную версию 3.4.0 -->
+    <script type="module" src="https://ajax.googleapis.com"></script>
+    <link href="https://fonts.googleapis.com" rel="stylesheet">
+    
+    <style>
+        body { background-color: #05070a; color: #e2e8f0; font-family: 'Roboto Condensed', sans-serif; margin: 0; overflow: hidden; height: 100vh; }
+        .mono { font-family: 'JetBrains Mono', monospace; }
+        .glass-panel { background: rgba(15, 23, 42, 0.8); backdrop-filter: blur(20px); border: 1px solid rgba(255, 255, 255, 0.1); z-index: 100; pointer-events: auto; }
+        
+        .model-viewer-container {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 1;
+        }
+
+        /* Стиль для индикатора загрузки */
+        #error-message {
+            display: none; position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+            color: #ef4444; background: rgba(0,0,0,0.8); padding: 20px; border-radius: 10px; z-index: 10;
+        }
+
+        .pulse-red { animation: pulse-red-anim 2s infinite; }
+        @keyframes pulse-red-anim {
+            0%, 100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.4); }
+            50% { box-shadow: 0 0 20px 0 rgba(239, 68, 68, 0.2); }
+        }
+    </style>
+</head>
+<body>
+
+    <div id="error-message" class="mono text-sm border border-red-500">
+        Ошибка загрузки 3D модели. Проверьте интернет-соединение или CORS.
+    </div>
+
+    <!-- ЛЕВАЯ ПАНЕЛЬ -->
+    <div class="fixed top-6 left-6 w-80 space-y-4 pointer-events-none z-50">
+        <div class="glass-panel p-6 rounded-3xl border-l-4 border-blue-500">
+            <span class="text-[10px] text-blue-400 mono uppercase tracking-widest">ID: 1IEP | BCR-ABL</span>
+            <h1 class="text-2xl font-bold tracking-tight uppercase italic text-white mt-1">ИМАТИНИБ</h1>
+            <div class="mt-4 space-y-2">
+                <div class="flex justify-between text-[10px] uppercase text-gray-500"><span>Статус захвата</span><span>65%</span></div>
+                <div class="h-1 bg-gray-800 rounded-full"><div class="h-full bg-blue-500" style="width: 65%"></div></div>
+            </div>
+        </div>
+        <div class="glass-panel p-4 rounded-2xl space-y-2">
+            <button class="w-full py-2 bg-blue-600/20 hover:bg-blue-600/40 border border-blue-500/30 rounded-xl text-[11px] uppercase mono text-blue-300 transition-all">Встряхнуть (Jiggle)</button>
+        </div>
+    </div>
+
+    <!-- ПРАВАЯ ПАНЕЛЬ -->
+    <div class="fixed top-6 right-6 w-80 space-y-4 pointer-events-none z-50">
+        <div class="glass-panel p-6 rounded-3xl border-r-4 border-cyan-500 text-right">
+            <p class="text-[10px] text-gray-500 uppercase mono">Счёт Rosetta</p>
+            <div id="score" class="text-6xl font-bold text-cyan-400 mono tracking-tighter">0</div>
+            <div class="mt-6 space-y-4 text-left">
+                <div class="space-y-1">
+                    <div class="flex justify-between text-[10px] uppercase text-gray-400"><span>Упаковка VdW</span><span class="text-white">93%</span></div>
+                    <div class="h-1 w-full bg-gray-800 rounded-full"><div class="h-full bg-green-500" style="width: 93%"></div></div>
+                </div>
+                <div class="bg-blue-500/10 p-3 rounded-xl border border-blue-500/20 flex justify-between items-center">
+                    <span class="text-[10px] text-blue-300 mono uppercase">AF3 Confidence</span>
+                    <span class="text-xl font-bold text-blue-400 mono">0.98</span>
+                </div>
+            </div>
+            <div class="mt-4 p-2 bg-red-500/10 border border-red-500/20 rounded text-red-500 text-[10px] uppercase pulse-red text-center">
+                Конфликт: THR315 (-250)
+            </div>
+        </div>
+    </div>
+
+    <!-- КОНТЕЙНЕР МОДЕЛИ -->
+    <div class="model-viewer-container">
+        <model-viewer 
+            id="molecule"
+            src="https://tripreport.github.io" 
+            alt="3D модель Иматиниба"
+            auto-rotate
+            camera-controls
+            shadow-intensity="1"
+            exposure="1"
+            environment-image="neutral"
+            interaction-prompt="none"
+            style="background: radial-gradient(circle, #111827 0%, #05070a 100%);"
+        >
+        </model-viewer>
+    </div>
+
+    <script>
+        const scoreTarget = 16500;
+        const scoreEl = document.getElementById('score');
+        const modelViewer = document.querySelector('#molecule');
+        const errorEl = document.getElementById('error-message');
+
+        // Анимация счета
+        let start = null;
+        function animate(timestamp) {
+            if (!start) start = timestamp;
+            const progress = Math.min((timestamp - start) / 2000, 1);
+            scoreEl.textContent = Math.floor(progress * scoreTarget).toLocaleString();
+            if (progress < 1) requestAnimationFrame(animate);
+        }
+        requestAnimationFrame(animate);
+
+        // Проверка загрузки модели
+        modelViewer.addEventListener('error', (event) => {
+            console.error("Ошибка Model-Viewer:", event.detail);
+            errorEl.style.display = 'block';
+        });
+
+        modelViewer.addEventListener('load', () => {
+            console.log("Молекула успешно загружена");
+            errorEl.style.display = 'none';
+        });
+    </script>
+</body>
+</html>
